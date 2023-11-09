@@ -11,40 +11,40 @@ import cats.effect.kernel.Ref
 object Main extends IOApp {
   type DeliveryTarget = String // TODO: replace with DiscordWebhookUrl or sth.
 
+  val feeds = Seq(
+    Feed("https://blog.3qe.us/feed", FeedType.Atom) -> "#foo",
+    Feed("https://www.scala-js.org/rss", FeedType.RSS) -> "#bar"
+  ) // stub. they should be loaded from DB
+
   def run(args: List[String]): IO[ExitCode] = {
-    val feeds = Seq(
-      Feed("https://blog.3qe.us/feed", FeedType.Atom) -> "#foo",
-      Feed("https://www.scala-js.org/rss", FeedType.RSS) -> "#bar"
-    ) // stub. they should be loaded from DB
-
-    def loop: IO[Unit] = {
-      val killswitchRef =
-        Ref[IO].of(() => IO.unit) // initnal value is a stub
-
-      val delivery = for {
-        _ <- IO.println("Loading configuration from DB ...")
-        _ <- IO.println("Preparing killswitch ...")
-        killswitchRef <- killswitchRef
-        perFeedDelivery <- deliverFeeds(feeds)
-        killswitch = () =>
-          IO.println("killswitch is called") >>
-            perFeedDelivery
-              .traverse(
-                _.cancel
-              )
-              .void // by calling this, we can restart/reload delivery process
-        _ <- killswitchRef.set(killswitch)
-        _ <- IO.sleep(30.seconds) // stub: emulating user interaction
-        ks <- killswitchRef.get
-        _ <- ks()
-      } yield ()
-
-      delivery.handleErrorWith { e =>
-        IO.println(s"Error: ${e.getMessage()}") >> IO.sleep(1.minute)
-      } >> loop
-    }
-
     loop.as(ExitCode.Success)
+  }
+
+  def loop: IO[Unit] = {
+    val killswitchRef =
+      Ref[IO].of(() => IO.unit) // initnal value is a stub
+
+    val delivery = for {
+      _ <- IO.println("Loading configuration from DB ...")
+      _ <- IO.println("Preparing killswitch ...")
+      killswitchRef <- killswitchRef
+      perFeedDelivery <- deliverFeeds(feeds)
+      killswitch = () =>
+        IO.println("killswitch is called") >>
+          perFeedDelivery
+            .traverse(
+              _.cancel
+            )
+            .void // by calling this, we can restart/reload delivery process
+      _ <- killswitchRef.set(killswitch)
+      _ <- IO.sleep(30.seconds) // stub: emulating user interaction
+      ks <- killswitchRef.get
+      _ <- ks()
+    } yield ()
+
+    delivery.handleErrorWith { e =>
+      IO.println(s"Error: ${e.getMessage()}") >> IO.sleep(1.minute)
+    } >> loop
   }
 
   // TODO: move to another file or module
