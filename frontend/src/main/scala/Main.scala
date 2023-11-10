@@ -17,6 +17,7 @@ object FrontendMain {
     val app = div(
       h1("Hello world!"),
       button(
+        cls := "btn btn-primary",
         "Get all feeds",
         onClick --> { _ =>
           client.Rss2DiscordBis.getAllFeeds().run { feeds =>
