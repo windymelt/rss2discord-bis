@@ -7,6 +7,7 @@ import cats.effect.kernel.Fiber
 import cats._
 import cats.implicits.{*, given}
 import cats.effect.kernel.Ref
+import wvlet.airframe.http.netty.NettyServer
 
 object Main extends IOApp {
   type DeliveryTarget = String // TODO: replace with DiscordWebhookUrl or sth.
@@ -19,11 +20,10 @@ object Main extends IOApp {
   def run(args: List[String]): IO[ExitCode] = {
     loop.as(ExitCode.Success)
   }
+  val killswitchRef =
+    Ref[IO].of(() => IO.unit) // initnal value is a stub
 
   def loop: IO[Unit] = {
-    val killswitchRef =
-      Ref[IO].of(() => IO.unit) // initnal value is a stub
-
     val delivery = for {
       _ <- IO.println("Loading configuration from DB ...")
       _ <- IO.println("Preparing killswitch ...")
@@ -37,9 +37,7 @@ object Main extends IOApp {
             )
             .void // by calling this, we can restart/reload delivery process
       _ <- killswitchRef.set(killswitch)
-      _ <- IO.sleep(30.seconds) // stub: emulating user interaction
-      ks <- killswitchRef.get
-      _ <- ks()
+      _ <- apiServer(killswitch).useForever
     } yield ()
 
     delivery.handleErrorWith { e =>
@@ -50,15 +48,12 @@ object Main extends IOApp {
   // TODO: move to another file or module
   // apiServer can restart/reload delivery process
   def apiServer(
-      cancelTokens: Seq[Fiber[IO, Throwable, Unit]]
+      killswitch: () => IO[Unit]
   ): Resource[IO, Unit] = Resource.make {
-    IO.println("Starting API server ...") >> IO.sleep(
-      30.seconds // stub: emulating user interaction
-    ) >> IO.println("Killing stream...") >> cancelTokens.traverse(
-      _.cancel
-    ) >> IO.unit
-    // TODO: implement API server
-  }(_ => IO.println("Stopping API server ..."))
+    IO.println("Starting API server ...") >> IO.blocking {
+      server.Server(killswitch).run()
+    }
+  }(s => IO.println("Stopping API server ..."))
 
   def deliverFeeds(
       feeds: Seq[(Feed, DeliveryTarget)]
