@@ -3,8 +3,7 @@ package api.v1
 
 import wvlet.airframe.http._
 
-enum FeedType:
-  case RSS, Atom
+type FeedType = "rss" | "atom"
 case class Feed(id: String, url: String, feedType: FeedType, enabled: Boolean)
 
 @RPC trait Rss2DiscordBis:
