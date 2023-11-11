@@ -12,10 +12,16 @@ import wvlet.airframe.http.netty.NettyServer
 object Main extends IOApp {
   type DeliveryTarget = String // TODO: replace with DiscordWebhookUrl or sth.
 
-  val feeds = Seq(
-    Feed("https://blog.3qe.us/feed", FeedType.Atom) -> "#foo",
-    Feed("https://www.scala-js.org/rss", FeedType.RSS) -> "#bar"
-  ) // stub. they should be loaded from DB
+  val repo: Repository[Id] = db.InMemoryDB() // TOOD: parametarize
+  repo.createFeed("1", "https://blog.3qe.us/feed", FeedType.Atom)
+  repo.createFeed("2", "https://www.scala-js.org/rss", FeedType.RSS)
+  repo.createDispatch(
+    "1",
+    "discord",
+    "https://discord.com/api/webhooks/..."
+  )
+  repo.createFeedDispatch("1", "1", "1")
+  repo.createFeedDispatch("2", "2", "1")
 
   def run(args: List[String]): IO[ExitCode] = {
     loop.as(ExitCode.Success)
@@ -28,7 +34,15 @@ object Main extends IOApp {
       _ <- IO.println("Loading configuration from DB ...")
       _ <- IO.println("Preparing killswitch ...")
       killswitchRef <- killswitchRef
-      perFeedDelivery <- deliverFeeds(feeds)
+      perFeedDelivery <- deliverFeeds(repo.getAllFeeds().flatMap { feed =>
+        val dispatches = repo
+          .getAllFeedsDispatches()
+          .filter(_.feedId == feed.id)
+          .map(_.dispatchToId)
+        dispatches.map(dispatchToId =>
+          (Feed(feed.url, feed.feedType), dispatchToId)
+        )
+      })
       killswitch = () =>
         IO.println("killswitch is called") >>
           perFeedDelivery
@@ -36,8 +50,11 @@ object Main extends IOApp {
               _.cancel
             )
             .void // by calling this, we can restart/reload delivery process
+        // TODO: trigger Deferred
       _ <- killswitchRef.set(killswitch)
-      _ <- apiServer(killswitch).useForever
+      _ <- apiServer(
+        killswitch
+      ).useForever // TODO: refill killswitch every reload
     } yield ()
 
     delivery.handleErrorWith { e =>
@@ -51,7 +68,9 @@ object Main extends IOApp {
       killswitch: () => IO[Unit]
   ): Resource[IO, Unit] = Resource.make {
     IO.println("Starting API server ...") >> IO.blocking {
-      server.Server(killswitch).run()
+      import cats.effect.unsafe.implicits._
+      val runks = () => killswitch().unsafeRunSync()
+      server.Server(runks, repo).run()
     }
   }(s => IO.println("Stopping API server ..."))
 
@@ -72,7 +91,7 @@ object Main extends IOApp {
     .metered(interval)
     .evalMap(es =>
       IO.println(
-        s"delivering entries to Discord [${es.map(_.title).mkString(", ")}]"
+        s"delivering entries to Discord"
       )
     ) // stub
     .compile

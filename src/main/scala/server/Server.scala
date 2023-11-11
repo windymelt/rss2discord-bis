@@ -3,23 +3,38 @@ package server
 
 import wvlet.airframe.http.netty.Netty
 import wvlet.airframe.http._
+import cats.Id
+import wvlet.airframe.http.netty.NettyServer
 
-class Rss2DiscordBis extends api.v1.Rss2DiscordBis:
+class Rss2DiscordBis(killswitch: () => ?, repo: Repository[Id])
+    extends api.v1.Rss2DiscordBis:
   override def getAllFeeds(): Seq[api.v1.Feed] =
-    Seq(
-      api.v1.Feed("1", "https://example.com/rss", "rss", true),
-      api.v1.Feed("2", "https://example.com/atom", "atom", true)
-    )
+    repo
+      .getAllFeeds()
+      .map(d =>
+        api.v1.Feed(
+          d.id,
+          d.url,
+          d.feedType.toString().asInstanceOf[api.v1.FeedType],
+          d.enabled
+        )
+      )
+  override def reload(): Unit = killswitch()
 
-class Server(killswitch: () => ?) {
+class Server(killswitch: () => ?, repo: Repository[Id]) {
   // Create a Router
   val router = RxRouter.of[Rss2DiscordBis]
 
-// Starting a new RPC server.
-  def run() = Netty.server
+  // Starting a new RPC server.
+  def run(): Unit = Netty.server
     .withRouter(router)
     .withPort(8080)
-    .start { server =>
+    .design
+    .bind[Rss2DiscordBis]
+    .toInstance {
+      Rss2DiscordBis(killswitch, repo)
+    }
+    .build[NettyServer] { server =>
       server.awaitTermination()
     }
 }

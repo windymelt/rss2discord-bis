@@ -8,6 +8,7 @@ case class Feed(id: String, url: String, feedType: FeedType, enabled: Boolean)
 
 @RPC trait Rss2DiscordBis:
   def getAllFeeds(): Seq[Feed]
+  def reload(): Unit
 
 // XXX: We must define this to annotate we can provide RPC service
 object Rss2DiscordBis extends RxRouterProvider:

@@ -24,6 +24,15 @@ object FrontendMain {
             println(feeds)
           }
         }
+      ),
+      button(
+        cls := "btn btn-danger",
+        "Reload",
+        onClick --> { _ =>
+          client.Rss2DiscordBis.reload().run { _ =>
+            println("Reloaded")
+          }
+        }
       )
     )
 
