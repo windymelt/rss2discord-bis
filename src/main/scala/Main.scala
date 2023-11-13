@@ -8,6 +8,7 @@ import cats._
 import cats.implicits.{*, given}
 import cats.effect.kernel.Ref
 import wvlet.airframe.http.netty.NettyServer
+import cats.effect.Deferred
 
 object Main extends IOApp {
   type DeliveryTarget = String // TODO: replace with DiscordWebhookUrl or sth.
@@ -29,11 +30,14 @@ object Main extends IOApp {
   val killswitchRef =
     Ref[IO].of(() => IO.unit) // initnal value is a stub
 
+  val killswitchDeferred = Deferred[IO, Unit]
+
   def loop: IO[Unit] = {
     val delivery = for {
       _ <- IO.println("Loading configuration from DB ...")
       _ <- IO.println("Preparing killswitch ...")
       killswitchRef <- killswitchRef
+      killswitchDeferred <- killswitchDeferred
       perFeedDelivery <- deliverFeeds(repo.getAllFeeds().flatMap { feed =>
         val dispatches = repo
           .getAllFeedsDispatches()
@@ -48,13 +52,16 @@ object Main extends IOApp {
           perFeedDelivery
             .traverse(
               _.cancel
+            ) >> killswitchDeferred
+            .complete(
+              ()
             )
             .void // by calling this, we can restart/reload delivery process
         // TODO: trigger Deferred
       _ <- killswitchRef.set(killswitch)
       _ <- apiServer(
         killswitch
-      ).useForever // TODO: refill killswitch every reload
+      ).use(_ => killswitchDeferred.get) // TODO: refill killswitch every reload
     } yield ()
 
     delivery.handleErrorWith { e =>
@@ -68,6 +75,9 @@ object Main extends IOApp {
       killswitch: () => IO[Unit]
   ): Resource[IO, Unit] = Resource.make {
     IO.println("Starting API server ...") >> IO.blocking {
+      // TODO: use Dispatcher
+      // TODO: use Fiber and throw server away
+      // TODO: return server stopper as Resource
       import cats.effect.unsafe.implicits._
       val runks = () => killswitch().unsafeRunSync()
       server.Server(runks, repo).run()
