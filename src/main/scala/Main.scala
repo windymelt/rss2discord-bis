@@ -9,6 +9,7 @@ import cats.implicits.{*, given}
 import cats.effect.kernel.Ref
 import wvlet.airframe.http.netty.NettyServer
 import cats.effect.Deferred
+import cats.effect.std.Dispatcher
 
 object Main extends IOApp {
   type DeliveryTarget = String // TODO: replace with DiscordWebhookUrl or sth.
@@ -57,11 +58,15 @@ object Main extends IOApp {
               ()
             )
             .void // by calling this, we can restart/reload delivery process
-        // TODO: trigger Deferred
       _ <- killswitchRef.set(killswitch)
-      _ <- apiServer(
-        killswitch
-      ).use(_ => killswitchDeferred.get) // TODO: refill killswitch every reload
+      _ <- Dispatcher
+        .sequential[IO]
+        .flatMap(d => apiServer(killswitch, d))
+        .use(_ =>
+          IO.println(
+            "Waiting for reload command."
+          ) >> killswitchDeferred.get >> IO.println("Reloading...")
+        )
     } yield ()
 
     delivery.handleErrorWith { e =>
@@ -72,17 +77,12 @@ object Main extends IOApp {
   // TODO: move to another file or module
   // apiServer can restart/reload delivery process
   def apiServer(
-      killswitch: () => IO[Unit]
-  ): Resource[IO, Unit] = Resource.make {
-    IO.println("Starting API server ...") >> IO.blocking {
-      // TODO: use Dispatcher
-      // TODO: use Fiber and throw server away
-      // TODO: return server stopper as Resource
-      import cats.effect.unsafe.implicits._
-      val runks = () => killswitch().unsafeRunSync()
-      server.Server(runks, repo).run()
-    }
-  }(s => IO.println("Stopping API server ..."))
+      killswitch: () => IO[Unit],
+      dispatcher: Dispatcher[IO]
+  ): Resource[IO, Any] =
+    Resource.make[IO, Fiber[IO, Throwable, NettyServer]](
+      IO.blocking(server.Server(killswitch, repo, dispatcher).run()).start
+    )(server => IO.println("closing server ...") >> IO.pure(server.cancel))
 
   def deliverFeeds(
       feeds: Seq[(Feed, DeliveryTarget)]

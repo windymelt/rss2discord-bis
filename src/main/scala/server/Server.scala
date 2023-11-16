@@ -5,6 +5,10 @@ import wvlet.airframe.http.netty.Netty
 import wvlet.airframe.http._
 import cats.Id
 import wvlet.airframe.http.netty.NettyServer
+import cats.effect.kernel.Resource
+import cats.effect.std.Dispatcher
+import cats.effect.IO
+import cats.effect.kernel.Fiber
 
 class Rss2DiscordBis(killswitch: () => ?, repo: Repository[Id])
     extends api.v1.Rss2DiscordBis:
@@ -21,20 +25,28 @@ class Rss2DiscordBis(killswitch: () => ?, repo: Repository[Id])
       )
   override def reload(): Unit = killswitch()
 
-class Server(killswitch: () => ?, repo: Repository[Id]) {
+class Server(
+    killswitch: () => IO[Unit],
+    repo: Repository[Id],
+    dispatcher: Dispatcher[IO]
+) {
   // Create a Router
   val router = RxRouter.of[Rss2DiscordBis]
 
   // Starting a new RPC server.
-  def run(): Unit = Netty.server
-    .withRouter(router)
-    .withPort(8080)
-    .design
-    .bind[Rss2DiscordBis]
-    .toInstance {
-      Rss2DiscordBis(killswitch, repo)
-    }
-    .build[NettyServer] { server =>
-      server.awaitTermination()
-    }
+  def run(): NettyServer =
+    Netty.server
+      .withRouter(router)
+      .withPort(8080)
+      .design
+      .bind[Rss2DiscordBis]
+      .toInstance {
+        Rss2DiscordBis(() => dispatcher.unsafeRunSync(killswitch()), repo)
+      }
+      .run[NettyServer, NettyServer] { server =>
+        {
+          server.awaitTermination()
+          server
+        }
+      }
 }
