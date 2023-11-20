@@ -1,13 +1,14 @@
 package io.github.windymelt.rss2discordbis
 
-import scalajs.js.annotation.*
-import api.v1._
+import com.raquo.airstream.eventbus.EventBus
 import com.raquo.laminar.api.L.{*, given}
+import io.github.windymelt.rss2discordbis.components.ToastMessage
 import org.scalajs.dom
 import org.w3c.dom.html.HTMLHtmlElement
 import wvlet.airframe.http.Http
-import com.raquo.airstream.eventbus.EventBus
-import io.github.windymelt.rss2discordbis.components.ToastMessage
+
+import scalajs.js.annotation.*
+import api.v1._
 
 object FrontendMain {
   @main def main(): Unit = {

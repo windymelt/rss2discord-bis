@@ -1,15 +1,18 @@
 package io.github.windymelt.rss2discordbis
 
-import cats.effect.{IO, IOApp, Resource, ExitCode}
-import fs2.Stream
-import scala.concurrent.duration._
-import cats.effect.kernel.Fiber
 import cats._
-import cats.implicits.{*, given}
-import cats.effect.kernel.Ref
-import wvlet.airframe.http.netty.NettyServer
 import cats.effect.Deferred
-import cats.effect.std.Dispatcher
+import cats.effect.ExitCode
+import cats.effect.IO
+import cats.effect.IOApp
+import cats.effect.Resource
+import cats.effect.kernel.Fiber
+import cats.effect.kernel.Ref
+import cats.implicits.{*, given}
+import fs2.Stream
+import wvlet.airframe.http.netty.NettyServer
+
+import scala.concurrent.duration._
 
 object Main extends IOApp {
   type DeliveryTarget = String // TODO: replace with DiscordWebhookUrl or sth.
@@ -33,7 +36,7 @@ object Main extends IOApp {
 
   val killswitchDeferred = Deferred[IO, Unit]
 
-  def loop: IO[Unit] = {
+  val loop: IO[Unit] = {
     val delivery = for {
       _ <- IO.println("Loading configuration from DB ...")
       _ <- IO.println("Preparing killswitch ...")
@@ -59,37 +62,39 @@ object Main extends IOApp {
             )
             .void // by calling this, we can restart/reload delivery process
       _ <- killswitchRef.set(killswitch)
-      _ <- Dispatcher
-        .sequential[IO]
-        .flatMap(d => apiServer(killswitch, d))
-        .use(_ =>
+      _ <- apiServer(killswitch, d).use(_ =>
           IO.println(
             "Waiting for reload command."
-          ) >> killswitchDeferred.get >> IO.println("Reloading...")
+          ) >> killswitchDeferred.get >> IO
+            .sleep(1.second) /* Give time to respond */ >> IO
+            .println("Reloading...")
         )
     } yield ()
 
     delivery.handleErrorWith { e =>
       IO.println(s"Error: ${e.getMessage()}") >> IO.sleep(1.minute)
-    } >> loop
-  }
+    }
+  }.foreverM
 
   // TODO: move to another file or module
   // apiServer can restart/reload delivery process
   def apiServer(
       killswitch: () => IO[Unit],
-      dispatcher: Dispatcher[IO]
   ): Resource[IO, Any] =
     Resource.make[IO, Fiber[IO, Throwable, NettyServer]](
-      IO.blocking(server.Server(killswitch, repo, dispatcher).run()).start
-    )(server => IO.println("closing server ...") >> IO.pure(server.cancel))
+      IO.blocking(server.Server(killswitch, repo).run()).start
+    )(server =>
+      IO.println("closing server ...") >> IO(server.cancel) >> IO.println(
+        "server stopped."
+      )
+    )
 
   def deliverFeeds(
       feeds: Seq[(Feed, DeliveryTarget)]
   ): IO[Seq[Fiber[IO, Throwable, Unit]]] = for {
     cancelTokens <- feeds
       .traverse(feed =>
-        periodicFetchDeliverProcess(feed._1, 10.second) // TODO: 5 minutes
+        periodicFetchDeliverProcess(feed._1, 5.minutes)
       )
   } yield cancelTokens
 
