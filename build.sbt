@@ -20,6 +20,15 @@ lazy val root = project
 
 Compile / run / fork := true
 
+ThisBuild / assemblyMergeStrategy := {
+  case PathList("META-INF", xs @ _*)         => MergeStrategy.discard
+  case PathList(ps @ _*) if ps.last endsWith ".html" => MergeStrategy.first
+  case "application.conf"                            => MergeStrategy.concat
+  case x =>
+    val oldStrategy = (ThisBuild / assemblyMergeStrategy).value
+    oldStrategy(x)
+}
+
 lazy val rss = project
   .in(file("rss"))
   .settings(
