@@ -15,7 +15,7 @@ import wvlet.airframe.http.netty.NettyServer
 import scala.concurrent.duration._
 
 object Main extends IOApp {
-  type DeliveryTarget = String // TODO: replace with DiscordWebhookUrl or sth.
+  type DeliveryTarget = DBDispatch
 
   val repo: Repository[Id] = db.InMemoryDB() // TOOD: parametarize
   repo.createFeed("1", "https://blog.3qe.us/feed", FeedType.Atom)
@@ -23,7 +23,7 @@ object Main extends IOApp {
   repo.createDispatch(
     "1",
     "discord",
-    "https://discord.com/api/webhooks/..."
+    sys.env("WEBHOOK_URL_1")
   )
   repo.createFeedDispatch("1", "1", "1")
   repo.createFeedDispatch("2", "2", "1")
@@ -47,8 +47,9 @@ object Main extends IOApp {
           .getAllFeedsDispatches()
           .filter(_.feedId == feed.id)
           .map(_.dispatchToId)
-        dispatches.map(dispatchToId =>
-          (Feed(feed.url, feed.feedType), dispatchToId)
+          .flatMap(repo.getDispatchById)
+        dispatches.map(dispatchTo =>
+          (Feed(feed.url, feed.feedType), dispatchTo)
         )
       })
       killswitch = () =>
@@ -62,13 +63,13 @@ object Main extends IOApp {
             )
             .void // by calling this, we can restart/reload delivery process
       _ <- killswitchRef.set(killswitch)
-      _ <- apiServer(killswitch, d).use(_ =>
-          IO.println(
-            "Waiting for reload command."
-          ) >> killswitchDeferred.get >> IO
-            .sleep(1.second) /* Give time to respond */ >> IO
-            .println("Reloading...")
-        )
+      _ <- apiServer(killswitch).use(_ =>
+        IO.println(
+          "Waiting for reload command."
+        ) >> killswitchDeferred.get >> IO
+          .sleep(1.second) /* Give time to respond */ >> IO
+          .println("Reloading...")
+      )
     } yield ()
 
     delivery.handleErrorWith { e =>
@@ -79,7 +80,7 @@ object Main extends IOApp {
   // TODO: move to another file or module
   // apiServer can restart/reload delivery process
   def apiServer(
-      killswitch: () => IO[Unit],
+      killswitch: () => IO[Unit]
   ): Resource[IO, Any] =
     Resource.make[IO, Fiber[IO, Throwable, NettyServer]](
       IO.blocking(server.Server(killswitch, repo).run()).start
@@ -94,24 +95,39 @@ object Main extends IOApp {
   ): IO[Seq[Fiber[IO, Throwable, Unit]]] = for {
     cancelTokens <- feeds
       .traverse(feed =>
-        periodicFetchDeliverProcess(feed._1, 5.minutes)
+        periodicFetchDeliverProcess(feed._1, feed._2, 5.minutes)
       )
   } yield cancelTokens
 
   def periodicFetchDeliverProcess(
       feed: Feed,
+      deliveryTarget: DeliveryTarget,
       interval: FiniteDuration
-  ): IO[Fiber[IO, Throwable, Unit]] = Stream
-    .repeatEval(fetchFeed(feed))
-    .metered(interval)
-    .evalMap(es =>
-      IO.println(
-        s"delivering entries to Discord"
+  ): IO[Fiber[IO, Throwable, Unit]] = {
+    Stream
+      .repeatEval(fetchFeed(feed))
+      .metered(interval)
+      .evalMap(es =>
+        es
+          .filter {
+            case e if (e.publishedAt orElse e.updatedAt).isDefined =>
+              val dt = (e.publishedAt orElse e.updatedAt).get
+              val now = java.time.OffsetDateTime.now()
+              val timeAfter = now.minusMinutes(5)
+              dt.isAfter(timeAfter)
+            case _ => false
+          }
+          .traverse { e =>
+            val content = s"""${e.title}
+${e.link}
+"""
+            discord.Discord.post(deliveryTarget.webhookUrl, content)
+          }
       )
-    ) // stub
-    .compile
-    .drain
-    .start
+      .compile
+      .drain
+      .start
+  }
 
   def fetchFeed(feed: Feed): IO[Seq[Entry]] = // stub
     IO.println(s"fetching a feed ${feed.url} ...") >> IO.blocking {

@@ -6,6 +6,7 @@ lazy val root = project
   .in(file("."))
   .dependsOn(rss)
   .dependsOn(api.jvm)
+  .dependsOn(discord)
   .settings(
     name := "rss2discord-bis",
     version := "0.1.0-SNAPSHOT",
